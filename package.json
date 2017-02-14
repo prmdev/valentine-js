@@ -1,0 +1,18 @@
+{
+  "name": "valentine",
+  "version": "1.0.0",
+  "description": "valentine robot for valentine's 2017, written in a day",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Aaron Sky",
+  "license": "MIT",
+  "dependencies": {
+    "bluebird": "^3.4.7",
+    "dotenv": "^4.0.0",
+    "jimp": "^0.2.27",
+    "node-twitter-api": "^1.8.0",
+    "rimraf": "^2.5.4"
+  }
+}
