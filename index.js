@@ -1,21 +1,28 @@
 require('dotenv').config();
-const path = require('path');
-const fs = require('fs');
-const rimraf = require('rimraf');
 const Promise = require('bluebird');
+const path = require('path');
+const fs = Promise.promisifyAll(require('fs'));
+const rimraf = Promise.promisify(require('rimraf'));
 const jimp = require('jimp');
 const twitterApi = require('node-twitter-api');
 
-const valentineDir = path.resolve(__dirname, 'valentines');
-if (fs.existsSync(valentineDir)) {
-    rimraf.sync(valentineDir);
-}
-fs.mkdirSync(valentineDir);
+const tempDir = path.resolve(__dirname, '.tmp');
+const valentineDir = path.resolve(tempDir, 'valentines');
+
+const messages = ['Happy Valentine\'s Day, nerd']
 
 const twitter = Promise.promisifyAll(new twitterApi({
     consumerKey: process.env.CONSUMER_TOKEN,
     consumerSecret: process.env.CONSUMER_TOKEN_SECRET
 }));
+
+function setupWorkingDirectory() {
+    return cleanTempDirectory().then(() => fs.mkdirAsync(tempDir)).then(() => fs.mkdirAsync(valentineDir));
+}
+
+function cleanTempDirectory() {
+    return rimraf(tempDir);
+}
 
 function loadValentine(state) {
     console.log('Loading in valentine image file...');
@@ -52,7 +59,7 @@ function loadTwitterFriends(state) {
 
 function generateValentines(state) {
     console.log('Generating valentines...');
-    return Promise.all(state.friends.map(user => generateValentine(user, state)))
+    return Promise.map(state.friends, user => generateValentine(user, state))
         .then(() => state);
 }
 
@@ -60,15 +67,24 @@ function generateValentine(user, state) {
     if (!state.baseBeaverImage) {
         return Promise.reject('beaver doesn\'t exist for some reason');
     }
-    const name = (user['screen_name'] || 'my friend').toLowerCase();
-    const filePath = getFilePathForUser(name);
-    return jimp.loadFont(jimp.FONT_SANS_32_BLACK)
-        .then((font) => {
-            const beaver = state.baseBeaverImage.clone();
-            beaver.print(font, 105, 240, name)
-                .write(filePath);
-            console.log('Generated valentine for', user['screen_name']);
-        });
+    const username = user['screen_name'];
+    const filePath = getFilePathForUser(username);
+    const name = username.toLowerCase();
+    return new Promise((resolve, reject) => {
+        jimp.loadFont(jimp.FONT_SANS_32_BLACK)
+            .then((font) => {
+                const beaver = state.baseBeaverImage.clone();
+                beaver.print(font, 105, 240, name)
+                    .write(filePath, (error, image) => {
+                        if (error) {
+                            reject(error);
+                            return;
+                        }
+                        console.log('Generated valentine for', username);
+                        resolve(state);
+                    });
+            });
+    });
 }
 
 function getFilePathForUser(user) {
@@ -83,22 +99,25 @@ function getFilePathForUser(user) {
 
 function sendValentines(state) {
     console.log('Sending valentines...');
-    return Promise.all(state.friends.map(user => sendValentine(user, state)))
+    return Promise.map(state.friends, user => sendValentine(user, state))
         .then(() => state)
         .catch(error => Promise.reject(error));
 }
 
 function sendValentine(user, state) {
-    console.log('Sending valentine to', user['screen_name']);
-    return twitter.uploadMediaAsync({ media: getFilePathForUser(user['screen_name']) }, process.env.ACCESS_TOKEN, process.env.ACCESS_TOKEN_SECRET)
+    const username = user['screen_name'];
+    const message = getRandomMessage(username);
+    console.log('Sending valentine to', username, `"${message}"`);
+    const filepath = getFilePathForUser(username);
+    return twitter.uploadMediaAsync({ media: filepath }, process.env.ACCESS_TOKEN, process.env.ACCESS_TOKEN_SECRET)
         .then((response) => {
-            const mediaId = response['media_id'];
+            const mediaId = response['media_id_string'];
             if (!mediaId) {
-                return Promise.reject();
+                return Promise.reject('No media id');
             }
             return twitter.statusesAsync(
                 'update',
-                { status: `@${user['screen_name']} Happy Valentine's Day ya goof`, 'media_ids': mediaId },
+                { status: message, 'media_ids': mediaId },
                 process.env.ACCESS_TOKEN,
                 process.env.ACCESS_TOKEN_SECRET
             );
@@ -106,9 +125,16 @@ function sendValentine(user, state) {
         .catch(error => Promise.reject(error));
 }
 
+function getRandomMessage(username) {
+    const index = Math.floor(Math.random() * messages.length);
+    const message = messages[index];
+    return `@${username} ${message}`;
+}
+
 (function main() {
-    // step 1 - load the picture
-    loadValentine({})
+    setupWorkingDirectory()
+        // step 1 - load the picture
+        .then(() => loadValentine({}))
         // step 2 - load the friends
         .then(loginToTwitter)
         .then(loadTwitterFriends)
